@@ -1,0 +1,92 @@
+# docker-compose.yml
+# Local development stack for PregnaCare backend
+# Usage: docker-compose up -d
+
+version: '3.9'
+
+services:
+
+  # ── PostgreSQL ───────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: pregnacare_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       pregnacare
+      POSTGRES_USER:     pregnacare_user
+      POSTGRES_PASSWORD: pregnacare_dev_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_initial_schema.sql:/docker-entrypoint-initdb.d/001_initial_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pregnacare_user -d pregnacare"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: pregnacare_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── pgAdmin (optional DB GUI) ────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pregnacare_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    admin@pregnacare.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - tools   # Only starts with: docker-compose --profile tools up
+
+  # ── API Server ───────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pregnacare_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST:       postgres
+      DB_PORT:       5432
+      DB_NAME:       pregnacare
+      DB_USER:       pregnacare_user
+      DB_PASSWORD:   pregnacare_dev_pass
+      REDIS_HOST:    redis
+      REDIS_PORT:    6379
+      NODE_ENV:      development
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run dev
+
+volumes:
+  postgres_data:
+  redis_data:
